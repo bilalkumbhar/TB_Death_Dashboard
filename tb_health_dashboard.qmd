@@ -1,0 +1,639 @@
+---
+title: "Health Spending vs. TB Mortality Dashboard"
+format: 
+  dashboard:
+    orientation: columns
+    scroll: false
+---
+
+```{python}
+#| echo: false
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
+from itables import show
+import itables.options as opt
+opt.css = """
+.itables table td { font-size: 12px; }
+.itables table th { font-size: 13px; }
+"""
+
+# Load and prepare TB deaths data
+tb_df = pd.read_csv("data/all_forms_of_tb_number_of_deaths_estimated.csv")
+tb_long = tb_df.melt(id_vars=['country'], var_name='year', value_name='tb_deaths')
+tb_long['year'] = tb_long['year'].astype(int)
+
+# Convert k to thousands and handle missing values safely
+def convert_tb_value(x):
+    try:
+        if pd.isna(x):
+            return float('nan')
+        if isinstance(x, str):
+            if 'k' in x:
+                return float(x.replace('k', '')) * 1000
+            return float(x)
+        return float(x)
+    except:
+        return float('nan')
+
+tb_long['tb_deaths'] = tb_long['tb_deaths'].apply(convert_tb_value)
+
+# Load and prepare health expenditure data
+health_df = pd.read_csv("data/sh_xpd_chex_pc_cd.csv")
+health_long = health_df.melt(id_vars=['country'], var_name='year', value_name='health_expenditure')
+health_long['year'] = health_long['year'].astype(int)
+
+# Convert k to thousands and handle missing values safely
+def convert_health_value(x):
+    try:
+        if pd.isna(x):
+            return float('nan')
+        if isinstance(x, str):
+            if 'k' in x:
+                return float(x.replace('k', '')) * 1000
+            return float(x)
+        return float(x)
+    except:
+        return float('nan')
+
+health_long['health_expenditure'] = health_long['health_expenditure'].apply(convert_health_value)
+
+# Merge datasets
+merged_df = pd.merge(tb_long, health_long, on=['country', 'year'], how='inner').dropna()
+
+# Calculate latest year statistics
+latest_year = merged_df['year'].max()
+df_latest = merged_df[merged_df['year'] == latest_year]
+
+# Calculate TB statistics
+tb_stats = {
+    'highest': df_latest.loc[df_latest['tb_deaths'].idxmax()],
+    'lowest': df_latest.loc[df_latest['tb_deaths'].idxmin()],
+    'global_avg': df_latest['tb_deaths'].mean()
+}
+
+# Calculate health expenditure statistics
+health_stats = {
+    'highest': df_latest.loc[df_latest['health_expenditure'].idxmax()],
+    'lowest': df_latest.loc[df_latest['health_expenditure'].idxmin()],
+    'global_avg': df_latest['health_expenditure'].mean()
+}
+
+# Create visualizations
+# TB Map
+tb_map_fig = px.choropleth(
+    df_latest,
+    locations="country",
+    locationmode="country names",
+    color="tb_deaths",
+    hover_name="country",
+    hover_data={'tb_deaths': ':,.0f', 'health_expenditure': ':,.0f'},
+    color_continuous_scale="Reds",
+    range_color=(0, df_latest['tb_deaths'].quantile(0.95)),
+    title=f"Global TB Deaths ({latest_year})"
+)
+
+# Health Expenditure Map
+health_map_fig = px.choropleth(
+    df_latest,
+    locations="country",
+    locationmode="country names",
+    color="health_expenditure",
+    hover_name="country",
+    hover_data={'health_expenditure': ':,.0f', 'tb_deaths': ':,.0f'},
+    color_continuous_scale="Blues",
+    range_color=(0, df_latest['health_expenditure'].quantile(0.95)),
+    title=f"Health Expenditure per Capita ({latest_year})"
+)
+
+# TB Trends
+trend_countries = ['India', 'China', 'South Africa', 'United States', 'Brazil', 'Nigeria']
+tb_trend_fig = px.line(
+    merged_df[merged_df['country'].isin(trend_countries)],
+    x="year",
+    y="tb_deaths",
+    color="country",
+    title="TB Deaths Trends (2000-2020)",
+    markers=True
+)
+
+# Health Expenditure Trends
+health_trend_fig = px.line(
+    merged_df[merged_df['country'].isin(trend_countries)],
+    x="year",
+    y="health_expenditure",
+    color="country",
+    title="Health Expenditure Trends (2000-2020)",
+    markers=True
+)
+
+# Scatter plot for relationship
+scatter_fig = px.scatter(
+    df_latest,
+    x="health_expenditure",
+    y="tb_deaths",
+    color="country",
+    size="tb_deaths",
+    hover_name="country",
+    log_x=True,
+    title="Health Expenditure vs. TB Deaths (2020)",
+    labels={
+        "health_expenditure": "Health Expenditure per Capita (USD, log scale)",
+        "tb_deaths": "TB Deaths"
+    }
+)
+
+# Top 10 TB Deaths
+top10_tb_fig = px.bar(
+    df_latest.nlargest(10, 'tb_deaths'),
+    x='tb_deaths',
+    y='country',
+    orientation='h',
+    title="Top 10 Countries by TB Deaths (2020)",
+    color='tb_deaths',
+    color_continuous_scale="Reds"
+)
+
+# Top 10 Health Expenditure
+top10_health_fig = px.bar(
+    df_latest.nlargest(10, 'health_expenditure'),
+    x='health_expenditure',
+    y='country',
+    orientation='h',
+    title="Top 10 Countries by Health Expenditure (2020)",
+    color='health_expenditure',
+    color_continuous_scale="Blues"
+)
+
+# Correlation by year - working version
+corr_df = merged_df.groupby('year')[['tb_deaths', 'health_expenditure']].corr().unstack()
+corr_df = corr_df.xs('tb_deaths', axis=1, level=1)['health_expenditure'].reset_index()
+corr_df.columns = ['year', 'correlation']
+
+corr_fig = px.line(
+    corr_df,
+    x="year",
+    y="correlation",
+    title="Correlation Between Health Expenditure and TB Deaths Over Time",
+    labels={"correlation": "Correlation Coefficient"}
+)
+```
+<style> body { background: linear-gradient(135deg,rgb(215, 181, 255) 0%,rgb(200, 216, 247) 100%); padding: 20px; } .navbar { background: linear-gradient(135deg,rgb(148, 53, 226) 0%,rgb(71, 26, 109) 100%); overflow: hidden; margin-bottom: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(49, 39, 68, 0.1); } .navbar a { float: left; display: block; color: white; text-align: center; padding: 14px 16px; text-decoration: none; font-size: 16px; font-weight: bold; transition: all 0.3s ease; } .navbar a:hover { background-color: rgba(180, 132, 132, 0.2); transform: translateY(-2px); } .navbar a.active { background-color:rgb(173, 32, 255); color: white; } .tab-content { display: none; animation: fadeIn 0.5s; background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-bottom: 20px; } .tab-content.active { display: block; } .stat-card { background: linear-gradient(135deg, #ffffff 0%, #f1f5f9 100%); border-radius: 10px; padding: 15px; margin: 10px 0; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; font-weight: bold; color: #2c3e50; border-left: 4px solid #3498db; } .stat-value { font-size: 24px; color:rgb(129, 0, 180); margin: 5px 0; } .download-section { background: linear-gradient(135deg, #f0fff4 0%, #dcffe4 100%); padding: 20px; border-radius: 8px; margin-top: 20px; border-left: 4px solid #38a169; } .about-section { background: linear-gradient(135deg, #fff5f5 0%, #ffebeb 100%); padding: 20px; border-radius: 8px; margin-top: 20px; border-left: 4px solidrgb(66, 45, 255); } @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } } </style> <!-- NAVIGATION --><div class="navbar"> <a href="#" class="nav-link active" onclick="showTab('tb')">TB MORTALITY</a> <a href="#" class="nav-link" onclick="showTab('health')">HEALTH SPENDING</a> <a href="#" class="nav-link" onclick="showTab('relationship')">RELATIONSHIP</a> <a href="#" class="nav-link" onclick="showTab('download')">DATA</a> <a href="#" class="nav-link" onclick="showTab('about')">ABOUT</a> </div><!-- TB MORTALITY TAB --><div id="tb" class="tab-content active">
+
+::: {.columns}
+
+```{python}
+#| echo: false
+from IPython.display import HTML
+HTML(f"""
+<div class="stat-card">
+    <div>Highest TB Deaths</div>
+    <div class="stat-value">▲ {tb_stats['highest']['tb_deaths']:,.0f}</div>
+    <div>{tb_stats['highest']['country']} (2020)</div>
+</div>
+""")
+```
+
+```{python}
+#| echo: false
+HTML(f"""
+<div class="stat-card">
+    <div>Lowest TB Deaths</div>
+    <div class="stat-value">▼ {tb_stats['lowest']['tb_deaths']:,.0f}</div>
+    <div>{tb_stats['lowest']['country']} (2020)</div>
+</div>
+""")
+```
+
+```{python}
+#| echo: false
+HTML(f"""
+<div class="stat-card">
+    <div>Global Average</div>
+    <div class="stat-value">⌀ {tb_stats['global_avg']:,.0f}</div>
+    <div>TB Deaths (2020)</div>
+</div>
+""")
+```
+:::
+
+```{python}
+#| fig-height: 600
+tb_map_fig.update_layout(
+    plot_bgcolor='rgba(0,0,0,0)',
+    paper_bgcolor='rgba(0,0,0,0)',
+    font=dict(color='#2c3e50'),
+    coloraxis_colorbar=dict(
+        title="TB Deaths",
+        thickness=20,
+        len=0.75
+    )
+)
+```
+
+```{python}
+#| fig-height: 500
+tb_trend_fig.update_layout(
+    xaxis_title="Year",
+    yaxis_title="TB Deaths",
+    hovermode="x unified",
+    plot_bgcolor='rgb(213, 223, 238)',
+    paper_bgcolor='rgba(245,247,250,1)',
+    legend=dict(
+        orientation="h",
+        yanchor="bottom",
+        y=1.02,
+        xanchor="right",
+        x=1
+    )
+)
+```
+
+```{python}
+#| fig-height: 500
+top10_tb_fig.update_layout(
+    xaxis_title="TB Deaths",
+    yaxis_title="Country",
+    yaxis={'categoryorder':'total ascending'},
+    plot_bgcolor='rgb(206, 211, 218)',
+    paper_bgcolor='rgb(255, 255, 255)',
+    coloraxis_colorbar=dict(
+        title="Deaths",
+        thickness=10,
+        len=0.5
+    )
+)
+```
+</div><!-- HEALTH SPENDING TAB --><div id="health" class="tab-content">
+
+::: {.columns}
+
+```{python}
+#| echo: false
+HTML(f"""
+<div class="stat-card">
+    <div>Highest Spending</div>
+    <div class="stat-value">▲ ${health_stats['highest']['health_expenditure']:,.0f}</div>
+    <div>{health_stats['highest']['country']} (2020)</div>
+</div>
+""")
+```
+
+```{python}
+#| echo: false
+HTML(f"""
+<div class="stat-card">
+    <div>Lowest Spending</div>
+    <div class="stat-value">▼ ${health_stats['lowest']['health_expenditure']:,.0f}</div>
+    <div>{health_stats['lowest']['country']} (2020)</div>
+</div>
+""")
+```
+
+```{python}
+#| echo: false
+HTML(f"""
+<div class="stat-card">
+    <div>Global Average</div>
+    <div class="stat-value">⌀ ${health_stats['global_avg']:,.0f}</div>
+    <div>Health Expenditure (2020)</div>
+</div>
+""")
+```
+:::
+
+```{python}
+#| fig-height: 600
+health_map_fig.update_layout(
+    plot_bgcolor='rgba(0,0,0,0)',
+    paper_bgcolor='rgba(0,0,0,0)',
+    font=dict(color='#2c3e50'),
+    coloraxis_colorbar=dict(
+        title="USD per capita",
+        thickness=20,
+        len=0.75
+    )
+)
+```
+
+```{python}
+#| fig-height: 500
+health_trend_fig.update_layout(
+    xaxis_title="Year",
+    yaxis_title="Health Expenditure (USD)",
+    hovermode="x unified",
+    plot_bgcolor='rgb(205, 215, 231)',
+    paper_bgcolor='rgba(245,247,250,1)',
+    legend=dict(
+        orientation="h",
+        yanchor="bottom",
+        y=1.02,
+        xanchor="right",
+        x=1
+    )
+)
+```
+
+```{python}
+#| fig-height: 500
+top10_health_fig.update_layout(
+    xaxis_title="Health Expenditure (USD)",
+    yaxis_title="Country",
+    yaxis={'categoryorder':'total ascending'},
+    plot_bgcolor='rgb(156, 161, 168)',
+    paper_bgcolor='rgba(245,247,250,1)',
+    coloraxis_colorbar=dict(
+        title="USD",
+        thickness=10,
+        len=0.5
+    )
+)
+```
+
+```{python}
+# Create a working copy of latest year data for regression-style plots
+reg_df = df_latest.copy()
+reg_df['log_health'] = np.log1p(reg_df['health_expenditure'])  # Optional log for plotting
+reg_df['spending_group'] = pd.qcut(reg_df['health_expenditure'], q=4, labels=["Low", "Medium", "High", "Very High"])
+```
+</div><!-- RELATIONSHIP TAB --><div id="relationship" class="tab-content">
+
+```{python}
+# Prepare relationship data
+reg_df = df_latest.copy()
+reg_df = reg_df.dropna(subset=['health_expenditure', 'tb_deaths'])
+
+# Create spending bins
+reg_df['spending_group'] = pd.qcut(reg_df['health_expenditure'], q=4, labels=["Low", "Medium", "High", "Very High"])
+
+
+# Histogram of TB Deaths by Spending Group
+hist_fig = px.histogram(
+    reg_df,
+    x='spending_group',
+    y='tb_deaths',
+    histfunc='avg',
+    color='spending_group',
+    title='Average TB Deaths by Health Spending Group (2020)',
+    labels={'spending_group': 'Health Spending Group', 'tb_deaths': 'Avg TB Deaths'},
+    color_discrete_sequence=px.colors.sequential.Plasma
+)
+
+hist_fig.update_layout(
+    plot_bgcolor='rgb(202, 215, 235)',
+    paper_bgcolor='rgba(245,247,250,1)',
+    yaxis_title="Average TB Deaths",
+    xaxis_title="Spending Group"
+)
+```
+
+```{python}
+top_spenders = reg_df.nlargest(10, 'health_expenditure')
+
+bar_fig = px.bar(
+    top_spenders.sort_values('health_expenditure'),
+    x='country',
+    y='tb_deaths',
+    color='health_expenditure',
+    title="Top 10 Health Spending Countries vs TB Deaths",
+    labels={'tb_deaths': 'TB Deaths'},
+    color_continuous_scale='Blues'
+)
+
+bar_fig.update_layout(
+    plot_bgcolor='rgb(197, 212, 235)',
+    paper_bgcolor='rgba(245,247,250,1)',
+    yaxis_title="TB Deaths",
+    xaxis_title="Country"
+)
+```
+
+```{python}
+# Pie Chart: TB Deaths by Spending Group
+tb_pie_fig = px.pie(
+    reg_df,
+    names='spending_group',
+    values='tb_deaths',
+    title='TB Deaths Share by Health Spending Group',
+    color='spending_group',
+    color_discrete_sequence=['#e74c3c', '#f39c12', '#27ae60', '#2980b9']  # Custom vibrant palette
+)
+tb_pie_fig.update_traces(textposition='inside', textinfo='percent+label')
+
+# Pie Chart: Health Expenditure Share by Group
+health_pie_fig = px.pie(
+    reg_df,
+    names='spending_group',
+    values='health_expenditure',
+    title='Health Expenditure Share by Spending Group',
+    color='spending_group',
+    color_discrete_sequence=['#1abc9c', '#9b59b6', '#34495e', '#2ecc71']  # Complementary beautiful palette
+)
+health_pie_fig.update_traces(textposition='inside', textinfo='percent+label')
+```
+
+```{python}
+sorted_df = reg_df.sort_values('health_expenditure')
+
+line_fig = go.Figure()
+
+line_fig.add_trace(go.Scatter(
+    x=sorted_df['health_expenditure'],
+    y=sorted_df['tb_deaths'],
+    mode='lines+markers',
+    name='TB Deaths',
+    line=dict(color='firebrick'),
+    hovertext=sorted_df['country']
+))
+
+line_fig.update_layout(
+    title='TB Deaths Across Increasing Health Expenditure (2020)',
+    xaxis_title='Health Expenditure per Capita (USD)',
+    yaxis_title='TB Deaths',
+    plot_bgcolor='rgb(196, 213, 238)',
+    paper_bgcolor='rgba(245,247,250,1)'
+)
+```
+
+```{python}
+#| fig-height: 500
+corr_fig = px.line(
+    corr_df,
+    x="year",
+    y="correlation",
+    markers=True,
+    title="Yearly Correlation: Health Spending vs TB Mortality",
+    labels={"correlation": "Pearson Correlation Coefficient"}
+)
+
+corr_fig.add_hline(y=0, line_dash="dash", line_color="gray")
+
+corr_fig.update_layout(
+    xaxis_title="Year",
+    yaxis_title="Correlation Coefficient",
+    yaxis_range=[-1, 1],
+    plot_bgcolor='rgb(196, 211, 233)',
+    paper_bgcolor='rgba(245,247,250,1)',
+    hovermode="x unified",
+    font=dict(color='#2c3e50')
+)
+```
+
+::: {.columns}
+
+```{python}
+#| echo: false
+HTML("""
+<div style="background: linear-gradient(135deg, #ebf8ff 0%, #bee3f8 100%); 
+            padding:20px; border-radius:8px; margin:10px; border-left: 4px solid #3182ce;">
+    <h3 style="color:#2c3e50; border-bottom:2px solid #3182ce;">Key Insight</h3>
+    <p>Countries with higher health expenditure per capita generally have lower TB mortality rates, 
+    though this relationship is complex and influenced by many factors including healthcare system 
+    efficiency and disease burden.</p>
+</div>
+""")
+```
+
+```{python}
+#| echo: false
+HTML("""
+<div style="background: linear-gradient(135deg, #fff5f5 0%, #ffebeb 100%); 
+            padding:20px; border-radius:8px; margin:10px; border-left: 4px solid #e53e3e;">
+    <h3 style="color:#2c3e50; border-bottom:2px solid #e53e3e;">Notable Outliers</h3>
+    <p>Some high-income countries still show relatively high TB rates, possibly due to 
+    immigration patterns or specific population vulnerabilities, while some low-income 
+    countries achieve better-than-expected TB outcomes through targeted programs.</p>
+</div>
+""")
+```
+:::
+
+<style>
+/* Beautify the DataTable */
+.display.compact {
+  font-family: 'Segoe UI', sans-serif;
+  font-size: 15px;
+  background-color:rgb(179, 222, 250);
+  border: 1px rgb(204, 230, 247);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* Beautify header */
+.display.compact thead {
+  background-color:rgb(35, 139, 165);
+  color: white;
+  font-weight: bold;
+}
+
+/* Table body row hover */
+.display.compact tbody tr:hover {
+  background-color:rgb(164, 212, 203);
+}
+
+/* Style DataTables buttons */
+.dt-button {
+  background-color:rgb(57, 154, 192) !important;
+  border: none !important;
+  color: white !important;
+  padding: 6px 14px !important;
+  margin-right: 5px;
+  border-radius: 5px !important;
+  font-weight: 600;
+}
+
+.dt-button:hover {
+  background-color:rgb(55, 153, 199) !important;
+  cursor: pointer;
+}
+</style>
+
+<style>
+/* =====================
+   TABLE STYLING - FILTERS + BUTTONS
+===================== */
+
+/* Column filters (inputs under each column header) */
+.dataTables_wrapper input[type="search"],
+.dataTables_wrapper input[type="text"],
+.dataTables_wrapper select {
+  border: 1px solidrgb(67, 175, 173);
+  border-radius: 6px;
+  padding: 4px 10px;
+  background-color: #f0ffff;
+  color: #2c3e50;
+  font-size: 13px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Search box (top right global search) */
+.dataTables_filter input {
+  border: 1px solid #319795;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  background-color: #f0ffff;
+}
+
+/* DataTable buttons: Copy, CSV, Excel */
+.dt-button {
+  background-color: #319795 !important;
+  color: white !important;
+  border: none !important;
+  border-radius: 5px !important;
+  padding: 6px 14px !important;
+  font-weight: 600;
+  margin-right: 5px;
+  transition: background-color 0.3s ease;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.dt-button:hover {
+  background-color: #2c7a7b !important;
+  cursor: pointer;
+}
+
+/* Optional: Add light blue row highlighting */
+.display tbody tr:nth-child(even) {
+  background-color: #e6f7ff;
+}
+
+.display tbody tr:hover {
+  background-color: #d0f0f0;
+}
+</style>
+
+</div><!-- DATA DOWNLOAD TAB --><div id="download" class="tab-content">
+
+```{python}
+#| echo: false
+show(
+    merged_df.sort_values('year', ascending=False),
+    dom='Bfrtip',
+    buttons=['copy', 'csv', 'excel'],
+    column_filters='header',
+    classes="display compact",
+    scrollY='500px',
+    scrollCollapse=True
+)
+```
+<div class="download-section"> <h3 style="color:#2c3e50; border-bottom:2px solid #38a169; padding-bottom:10px;">Download Instructions</h3> <p>Use the buttons above the table to copy or export the dataset to CSV or Excel format.</p> <p>The dataset includes:</p> <ul> <li>TB deaths estimates by country and year</li> <li>Health expenditure per capita (current USD) by country and year</li> <li>Data from 2000-2020 for 200+ countries</li> </ul> </div></div><!-- ABOUT TAB --><div id="about" class="tab-content"><div class="about-section"> <h3 style="color:#e53e3e; border-bottom:2px solid #e53e3e;">
+Data Sources</h3> <div><p>1. <strong>Tuberculosis Deaths</strong>: World Health Organization estimates of TB mortality (all forms)</P> <p>2. <strong>Health Expenditure</strong>: World Bank data on current health expenditure per capita (current USD)</p> </div><h3 style="color:#e53e3e; border-bottom:2px solid #e53e3e; margin-top:20px;">Project Methodology</h3><ul style="list-style-type: none; padding-left: 0;"> <li><span style="color:#e53e3e; font-weight:bold;">•</span> Data cleaned and standardized for analysis</li> <li><span style="color:#e53e3e; font-weight:bold;">•</span> Countries with incomplete data excluded</li> <li><span style="color:#e53e3e; font-weight:bold;">•</span> All values converted to numeric format</li> </ul> </div><div style="background: linear-gradient(135deg, #f0fff4 0%, #dcffe4 100%); padding:20px; border-radius:8px; margin-top:20px; border-left: 4px solid #38a169;"> <h3 style="color:#2c3e50; border-bottom:2px solid #38a169;">Public Health Implications</h3> <ul style="list-style-type: none; padding-left: 0;"> <li><span style="color:#38a169; font-weight:bold;">•</span> TB remains a major global health challenge</li> <li><span style="color:#38a169; font-weight:bold;">•</span> Health spending alone doesn't guarantee better outcomes</li> <li><span style="color:#38a169; font-weight:bold;">•</span> Efficient allocation of resources is critical</li> <li><span style="color:#38a169; font-weight:bold;">•</span> Targeted interventions can be highly effective</li> </ul> </div>
+<!-- RESEARCH INSIGHTS SECTION -->
+  <div style="background: linear-gradient(135deg, #edf2f7 0%, #e6fffa 100%); padding: 20px; border-radius: 8px; margin-top: 20px; border-left: 4px solid #319795;">
+    <h3 style="color: #2c3e50; border-bottom: 2px solid #319795;">Research Insights</h3>
+    <ul style="list-style-type: none; padding-left: 0;">
+      <li><span style="color: #319795; font-weight: bold;">•</span> Countries with higher health expenditure per capita generally tend to report lower TB mortality rates over time.</li>
+      <li><span style="color: #319795; font-weight: bold;">•</span> However, some high-expenditure countries still struggle with TB outcomes, suggesting spending efficiency and targeting are critical factors.</li>
+      <li><span style="color: #319795; font-weight: bold;">•</span> Low-income countries remain disproportionately affected, highlighting the need for international support and equitable access to healthcare.</li>
+      <li><span style="color: #319795; font-weight: bold;">•</span> The global TB death rate showed a gradual decline from 2000 to 2020, but recent plateaus call for renewed focus on intervention programs.</li>
+      <li><span style="color: #319795; font-weight: bold;">•</span> Data-driven strategies, resource allocation, and timely interventions can significantly improve TB-related health outcomes worldwide.</li>
+    </ul>
+  </div>
+</div>
+</div><script> function showTab(tabName) { var tabContents = document.getElementsByClassName("tab-content"); for (var i = 0; i < tabContents.length; i++) { tabContents[i].classList.remove("active"); } var navLinks = document.getElementsByClassName("nav-link"); for (var i = 0; i < navLinks.length; i++) { navLinks[i].classList.remove("active"); } document.getElementById(tabName).classList.add("active"); event.currentTarget.classList.add("active"); } document.addEventListener('DOMContentLoaded', function() { document.getElementById('tb').classList.add('active'); document.querySelector('.nav-link').classList.add('active'); }); </script>
+
+
+
